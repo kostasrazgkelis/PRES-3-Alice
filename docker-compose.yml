@@ -1,0 +1,63 @@
+version: '3.9'
+
+services:
+
+    front:
+        container_name: front_end_alice
+        build:
+            context: .
+            dockerfile: infrastructures/front/Dockerfile
+        ports:
+            - "3000:3000"
+        environment:
+            - PORT=3000
+            - NAME=front
+            - CHOKIDAR_USEPOLLING=true
+        restart: always
+        env_file:
+            - .env
+        volumes:
+            - ./src/services/front/:/src/react-front/
+        networks:
+            - back-front-network
+        stdin_open: true
+        tty: true
+
+    backend:
+        container_name: back_end_alice
+        build:
+            context: .
+            args:
+                NAME: ${CLUSTER_A}
+            dockerfile: infrastructures/app/Dockerfile
+        ports:
+            - "9200:9200"
+        environment:
+            - PORT=9200
+            - DEBUG=1
+            - NAME=${CLUSTER_A}
+        restart: always
+        env_file:
+            - .env
+        volumes:
+            - ./src/services/app/:/src/app/
+            -  shared-workspace:/opt/workspace
+        networks:
+            - spark-net
+            - back-front-network
+
+
+volumes:
+    shared-workspace:
+        external: true
+        name: pres3-spark_shared-workspace
+
+networks:
+    spark-net:
+        name: spark-net
+        external: true
+    back-front-network:
+
+
+
+
