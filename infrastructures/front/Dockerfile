@@ -30,6 +30,7 @@ COPY ./infrastructures/front /react-front
 
 RUN npm install
 RUN npm install js-file-download --save
+RUN npm install --save react-helmet
 
 COPY ./src/services/front /react-front
 

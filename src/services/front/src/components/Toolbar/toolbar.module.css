@@ -1,0 +1,35 @@
+.ToolbarContainer{
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+
+}
+.NavWrapper{
+    display: flex;
+    align-items: center;
+    justify-content: space-evenly;
+    padding: 8px;
+    background-color: rgba(255, 255, 255, .075);
+    border-radius: 16px;
+    margin: 12px auto;
+
+}
+
+.NavWrapper p{
+    color: white;
+}
+
+.NavWrapper > div{
+    margin: 0 32px;
+ 
+}
+
+.NavWrapper a {
+    color: black;
+    text-decoration: none;
+}
+
+.ChildContainer{
+    max-width: 70%;
+    margin: auto;
+}
