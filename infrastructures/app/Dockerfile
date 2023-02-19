@@ -16,9 +16,9 @@ RUN apt-get update && \
 ENV JAVA_HOME /usr/lib/jvm/java-11-openjdk-amd64/
 RUN export JAVA_HOME
 
-RUN wget https://dlcdn.apache.org/spark/spark-3.2.2/spark-3.2.2-bin-hadoop3.2.tgz && \
+RUN wget https://dlcdn.apache.org/spark/spark-3.3.2/spark-3.3.2-bin-hadoop3.tgz && \
     tar xvf spark-* && \
-    mv spark-3.2.2-bin-hadoop3.2 /opt/spark && \
+    mv spark-3.3.2-bin-hadoop3 /opt/spark && \
     rm spark-*
     
 COPY ./infrastructures/app/requirements.txt /requirements.txt

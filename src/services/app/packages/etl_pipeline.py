@@ -4,7 +4,7 @@ import random
 import hashlib
 
 import jellyfish
-from pyspark.sql.functions import udf, col
+from pyspark.sql.functions import udf, col, input_file_name
 from pyspark.sql.types import StringType
 from pyspark.sql import SparkSession
 from pyspark import SparkConf
@@ -26,12 +26,15 @@ class ThesisSparkClassETLModel:
     """
 
     def __init__(self,
+                 logger,
                  project_name: str,
                  hdfs: HDFS,
                  filename: str,
                  matching_field: str = '',
                  columns: list = None,
-                 noise: int = None):
+                 noise: int = None
+                 ):
+        self.logger = logger
         self.project_name = project_name
         self.hdfs_obj = hdfs
         self.matching_field = matching_field
@@ -40,11 +43,12 @@ class ThesisSparkClassETLModel:
         self.columns = columns
         self.dataframe = None
         self.df_with_noise = None
+        self.numPartitions = 100
 
         spark_driver_host = socket.gethostname()
         self.spark_conf = SparkConf() \
             .setAll([
-            ('spark.master', 'spark://spark-master:7077'),
+            ('spark.master', 'local[*]'),
             ('spark.driver.bindAddress', '0.0.0.0'),
             ('spark.driver.host', spark_driver_host),
             ('spark.app.name', self.project_name),
@@ -74,12 +78,14 @@ class ThesisSparkClassETLModel:
     def hash_sha256(data):
         return hashlib.sha256(data.encode()).hexdigest()
 
-    def create_alp(self) -> str:
+    @staticmethod
+    @udf(StringType())
+    def create_alp() -> str:
         return str(chr(random.randrange(65, 90))) + str(chr(random.randrange(48, 54))) + str(
             chr(random.randrange(48, 54))) + str(chr(random.randrange(48, 54)))
 
     def extract_data(self):
-        self.dataframe = self.spark.read.csv(EXTRACT_DIRECTORY + self.filename, header=True)
+        self.dataframe = self.spark.read.csv(EXTRACT_DIRECTORY + self.filename, header=True).coalesce(numPartitions=self.numPartitions)
 
     def transform_data(self):
         self.dataframe = self.dataframe.na.drop('any')
@@ -108,10 +114,29 @@ class ThesisSparkClassETLModel:
         Returns:
 
         """
-        # self.dataframe.coalesce(1).write.format('com.databricks.spark.csv'). \
-        #     mode('overwrite'). \
-        #     save(LOAD_DIRECTORY, header='true')
-        self.dataframe.toPandas().to_csv(os.path.join(LOAD_DIRECTORY, 'transformed_data.csv'), index=False)
+        folder_path = os.path.join(LOAD_DIRECTORY, "results")
+        self.dataframe.coalesce(10).write.csv(folder_path, header=True, mode="overwrite")
+
+        # list all CSV files in the directory
+        csv_files = [f for f in os.listdir(folder_path) if f.endswith(".csv")]
+
+        # read in each CSV file as a separate DataFrame and add it to a list
+        df_list = []
+        for csv_file in csv_files:
+            file_path = os.path.join(folder_path, csv_file)
+            df = self.spark.read.csv(file_path, header=True, inferSchema=True)
+            df_list.append(df)
+
+        # combine the DataFrames into a single DataFrame
+        merged_df = df_list[0]
+        for df in df_list[1:]:
+            merged_df = merged_df.union(df)
+
+        # write the combined DataFrame to a single CSV file
+        merged_df.write.csv(os.path.join(LOAD_DIRECTORY, "merged_file.csv"), header=True, mode="overwrite")
+        self.logger.logger.info(f"merged_df: {merged_df.show()}")
+
+        #self.dataframe.toPandas().to_csv(os.path.join(LOAD_DIRECTORY, 'transformed_data.csv'), index=False)
 
     def start_etl(self):
         try:

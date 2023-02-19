@@ -208,6 +208,34 @@ export default function ShowFiles({filesA, setFilesA}) {
         setOpen(false);
     };
 
+    // const handleClickDelete = async (directory, file_name) => {
+    //     const params = {
+    //         file: file_name
+    //     };
+    //     try{
+    //         const response = await axios.delete(process.env.REACT_APP_HDFS_HOST_DOWNLOAD_FILE + directory, {params}).then((response) => {
+    //         })
+    //         setResults(response);
+    //         console.log(file_name + ' has been deleted');
+    //         var files
+    //
+    //         if (directory === 'joined_data') {
+    //             files = setJoinedFiles
+    //
+    //         }
+    //         else {
+    //             files = setTransformedFiles
+    //         }
+    //
+    //         files((current) =>
+    //             current.filter((projects) => projects.name !== file_name)
+    //         );
+    //
+    //     }catch(error){
+    //         console.log('ERROR ', error);
+    //     }
+    // };
+
     const displayAFiles = filesA?.map((item, idx) => {
         return (
             <div className={styles.FileWrapper} key={idx}>

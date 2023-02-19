@@ -1,6 +1,7 @@
 """
     The backend endpoints of our web application for the service A (Alice)
 """
+import csv
 import io
 
 import requests
@@ -26,15 +27,12 @@ def allowed_file(filename):
 
 
 def get_data_from_file(directory: str, filename: str) -> dict:
-    result_dict = {'name': None,
-                   'columns': [None]}
 
-    df = pd.read_csv(directory + "/" + filename, header=0)
-    columns = df.columns.values.tolist()
+    columns = pd.read_csv(os.path.join(directory, filename), index_col=0, nrows=0).columns.tolist()
 
-    result_dict['name'] = filename
-    result_dict['columns'] = columns
-    return result_dict
+    return {'name': filename,
+            'columns': columns}
+
 
 
 @app.route("/upload-file", methods=['GET', 'POST'])
@@ -246,7 +244,8 @@ def get():
                                               columns=columns,
                                               filename=file_name,
                                               matching_field=matching_field,
-                                              noise=noise)
+                                              noise=noise,
+                                              logger=app)
         etl_object.start_etl()
         response = app.response_class(
             status=200,
