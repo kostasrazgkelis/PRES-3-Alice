@@ -246,12 +246,16 @@ def get():
                                               matching_field=matching_field,
                                               noise=noise,
                                               logger=app)
-        etl_object.start_etl()
-        response = app.response_class(
+        if not etl_object.start_etl():
+            return app.response_class(
+                status=400,
+                response=json.dumps({'message': 'There was an error.'})
+            )
+
+        return app.response_class(
             status=200,
             response=json.dumps({'message': 'File has been transformed.'})
         )
-        return response
 
 
 if __name__ == '__main__':
