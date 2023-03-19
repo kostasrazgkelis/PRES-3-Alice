@@ -4,8 +4,9 @@ import random
 import hashlib
 
 import jellyfish
+import pandas as pd
 from pyspark.sql.functions import udf, col, input_file_name
-from pyspark.sql.types import StringType
+from pyspark.sql.types import StringType, StructType, StructField
 from pyspark.sql import SparkSession
 from pyspark import SparkConf
 
@@ -43,7 +44,7 @@ class ThesisSparkClassETLModel:
         self.columns = columns
         self.dataframe = None
         self.df_with_noise = None
-        self.numPartitions = 100
+        self.numPartitions = 1000
 
         spark_driver_host = socket.gethostname()
         self.spark_conf = SparkConf() \
@@ -59,10 +60,12 @@ class ThesisSparkClassETLModel:
             ('spark.cores.max', "4"),
             ("spark.executor.memory", "1g"),
             ('spark.driver.memory', '15g'),
-            ('spark.submit.pyFiles', '/src/app/udf_files.zip')
+            ('spark.submit.pyFiles', '/src/app/udf_files.zip'),
+            ("spark.python.serializer", "org.apache.spark.serializer.PythonSerializer"),
+            ("spark.python.serializer.batchSize", "1000")
         ])
 
-        self.spark = SparkSession.builder\
+        self.spark = SparkSession.builder \
             .config(conf=self.spark_conf) \
             .enableHiveSupport() \
             .getOrCreate()
@@ -78,27 +81,36 @@ class ThesisSparkClassETLModel:
     def hash_sha256(data):
         return hashlib.sha256(data.encode()).hexdigest()
 
-    @staticmethod
-    @udf(StringType())
-    def create_alp() -> str:
+    # @staticmethod
+    # @udf(StringType())
+    def create_alp(self) -> str:
         return str(chr(random.randrange(65, 90))) + str(chr(random.randrange(48, 54))) + str(
             chr(random.randrange(48, 54))) + str(chr(random.randrange(48, 54)))
 
     def extract_data(self):
-        self.dataframe = self.spark.read.csv(EXTRACT_DIRECTORY + self.filename, header=True).coalesce(numPartitions=self.numPartitions)
+        self.logger.logger.info(f"started extracting data")
+        self.dataframe = self.spark.read.csv(EXTRACT_DIRECTORY + self.filename, header=True).coalesce(
+            numPartitions=self.numPartitions)
+        self.logger.logger.info(f"finished extracting data")
 
     def transform_data(self):
+        self.logger.logger.info(f"started transforming data")
         self.dataframe = self.dataframe.na.drop('any')
+
         columns = self.dataframe.columns
         size = int(self.dataframe.count() * (self.noise / 100))
-        data = [{colum: (self.create_alp() if not colum == self.matching_field else 'Fake Index') for colum in columns}
-                for _ in range(0, size)]
+        schema = StructType([StructField(c, StringType(), True) for c in columns])
 
-        # create noise
-        df_with_noise = self.spark.createDataFrame(data, columns)
+        data = [(self.create_alp() if not column == self.matching_field else 'Fake Index') for column in columns]
+        data = [dict(zip(columns, row)) for row in zip(*data)]
+        data = [tuple(row.values()) for row in data for _ in range(0, size)]
+
+        df_with_noise = self.spark.createDataFrame(data, schema)
+        df_with_noise = df_with_noise.coalesce(self.numPartitions).select([col(c).cast("string") for c in df_with_noise.columns])
+        df_with_noise = df_with_noise.coalesce(self.numPartitions)
 
         # add noise
-        self.dataframe = self.dataframe.union(df_with_noise)
+        self.dataframe = self.dataframe.union(df_with_noise).coalesce(numPartitions=self.numPartitions)
 
         # apply Soundex + SHA256
         self.dataframe = self.dataframe.select([self.hash_sha256(self.jelly(col(column))).alias(column)
@@ -107,6 +119,7 @@ class ThesisSparkClassETLModel:
 
         # sort by a random column
         self.dataframe = self.dataframe.sort(random.choice(columns))
+        self.logger.logger.info(f"finished transforming data")
 
     def load_data(self):
         """
@@ -114,29 +127,24 @@ class ThesisSparkClassETLModel:
         Returns:
 
         """
+        self.logger.logger.info(f"started loading data")
+
         folder_path = os.path.join(LOAD_DIRECTORY, "results")
-        self.dataframe.coalesce(10).write.csv(folder_path, header=True, mode="overwrite")
 
-        # list all CSV files in the directory
-        csv_files = [f for f in os.listdir(folder_path) if f.endswith(".csv")]
+        self.dataframe.coalesce(numPartitions=self.numPartitions).write.csv(folder_path, header=True, mode="overwrite")
+#
+        # Define an empty list to hold the dataframes
+        dfs = []
+        # Use a loop to read the CSV files in chunks and append them to the list
+        for filename in [f for f in os.listdir(folder_path) if f.endswith(".csv")]:
+            for chunk in pd.read_csv(os.path.join(folder_path, filename), chunksize=1000):
+                dfs.append(chunk)
 
-        # read in each CSV file as a separate DataFrame and add it to a list
-        df_list = []
-        for csv_file in csv_files:
-            file_path = os.path.join(folder_path, csv_file)
-            df = self.spark.read.csv(file_path, header=True, inferSchema=True)
-            df_list.append(df)
+        # Concatenate the dataframes in the list into a single dataframe
+        merged_df = pd.concat(dfs)
+        merged_df.to_csv(os.path.join(LOAD_DIRECTORY, "transformed_data.csv"), header=True, index=False)
 
-        # combine the DataFrames into a single DataFrame
-        merged_df = df_list[0]
-        for df in df_list[1:]:
-            merged_df = merged_df.union(df)
-
-        # write the combined DataFrame to a single CSV file
-        merged_df.write.csv(os.path.join(LOAD_DIRECTORY, "merged_file.csv"), header=True, mode="overwrite")
-        self.logger.logger.info(f"merged_df: {merged_df.show()}")
-
-        #self.dataframe.toPandas().to_csv(os.path.join(LOAD_DIRECTORY, 'transformed_data.csv'), index=False)
+        self.logger.logger.info(f"finished loading data")
 
     def start_etl(self):
         try:
@@ -145,7 +153,9 @@ class ThesisSparkClassETLModel:
             self.load_data()
             self.spark.stop()
         except Exception as e:
-            return e
+            self.logger.logger.error(f"There was an error in : {e}")
+            return False
+        return True
 
 
 class ThesisSparkClassCheckFake(ThesisSparkClassETLModel):
@@ -164,7 +174,8 @@ class ThesisSparkClassCheckFake(ThesisSparkClassETLModel):
         if "_c0" in self.df_columns:
             self.df_columns.remove("_c0")
 
-        matching_field = [name for name, value in self.dataframe.take(1)[0].asDict().items() if not re.match("[0-9a-f]{64}", value)]
+        matching_field = [name for name, value in self.dataframe.take(1)[0].asDict().items() if
+                          not re.match("[0-9a-f]{64}", value)]
         matching_field.remove("_c0")
         if "_c0" in self.df_columns:
             self.df_columns.remove("_c0")
@@ -185,13 +196,13 @@ class ThesisSparkClassCheckFake(ThesisSparkClassETLModel):
         self.dataframe = self.dataframe.withColumnRenamed(self.matching_field, "MatchingField")
         self.dataframe = self.dataframe.na.drop('any')
 
-        self.matched_data = self.dataframe.join(other=self.dataframe_joined_data, on=["MatchingField"], how='left')\
-            .select(self.dataframe["*"])\
+        self.matched_data = self.dataframe.join(other=self.dataframe_joined_data, on=["MatchingField"], how='left') \
+            .select(self.dataframe["*"]) \
             .where("MatchingField!='Fake Index'")
 
         self.dataframe = self.dataframe.withColumnRenamed("MatchingField", self.matching_field)
-        self.matched_data = self.matched_data.drop(*(colms for colms in self.matched_data.columns if colms not in self.df_columns))
-
+        self.matched_data = self.matched_data.drop(
+            *(colms for colms in self.matched_data.columns if colms not in self.df_columns))
 
     def load_data(self):
         # self.matched_data.coalesce(1).write.format('com.databricks.spark.csv'). \
